@@ -1,3 +1,14 @@
+# directories 
+checkpoint/
+logs/
+results/
+translated_random_sample/
+dataset/
+samples/
+discriminator_scores/
+datasetv3_55.zip
+
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

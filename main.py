@@ -7,7 +7,7 @@ from utils import *
 def parse_args():
     desc = "Tensorflow implementation of U-GAT-IT"
     parser = argparse.ArgumentParser(description=desc)
-    parser.add_argument('--phase', type=str, default='train', help='[train / test]')
+    parser.add_argument('--phase', type=str, default='train', help='[train / test / test_discriminator]')
     parser.add_argument('--light', type=str2bool, default=False, help='[U-GAT-IT full version / U-GAT-IT light version]')
     parser.add_argument('--dataset', type=str, default='selfie2anime', help='dataset_name')
 
@@ -35,9 +35,14 @@ def parse_args():
     parser.add_argument('--n_critic', type=int, default=1, help='The number of critic')
     parser.add_argument('--sn', type=str2bool, default=True, help='using spectral norm')
 
-    parser.add_argument('--img_size', type=int, default=256, help='The size of image')
+    parser.add_argument('--img_size_h', type=int, default=256, help='The height of image')
+    parser.add_argument('--img_size_w', type=int, default=256, help='The width of image')
+    parser.add_argument('--patch_h', type=int, default=64, help='patch height')
+    parser.add_argument('--patch_w', type=int, default=64, help='patch weigth')
+    parser.add_argument('--patch', type=str2bool, default= False, help ='enable random cropping to train in patches')
+ 
     parser.add_argument('--img_ch', type=int, default=3, help='The size of image channel')
-    parser.add_argument('--augment_flag', type=str2bool, default=True, help='Image augmentation use or not')
+    parser.add_argument('--augment_flag', type=str2bool, default=False, help='Image augmentation use or not')
 
     parser.add_argument('--checkpoint_dir', type=str, default='checkpoint',
                         help='Directory name to save the checkpoints')
@@ -83,9 +88,10 @@ def main():
     args = parse_args()
     if args is None:
       exit()
-
+    #config = tf.ConfigProto()
+    gpu_options = tf.GPUOptions(visible_device_list="0")
     # open session
-    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+    with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
         gan = UGATIT(sess, args)
 
         # build graph
@@ -101,6 +107,10 @@ def main():
         if args.phase == 'test' :
             gan.test()
             print(" [*] Test finished!")
+        if args.phase == 'test_discriminator':
+            gan.test_discriminator()
+            print(" [*] Test finished!")
+            
 
 if __name__ == '__main__':
     main()

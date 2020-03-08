@@ -4,6 +4,8 @@ from glob import glob
 import time
 from tensorflow.contrib.data import prefetch_to_device, shuffle_and_repeat, map_and_batch
 import numpy as np
+import pandas as pd 
+import csv
 
 class UGATIT(object) :
     def __init__(self, sess, args):
@@ -52,7 +54,12 @@ class UGATIT(object) :
         self.n_critic = args.n_critic
         self.sn = args.sn
 
-        self.img_size = args.img_size
+        #self.img_size = args.img_size
+        self.img_size_h= args.img_size_h
+        self.img_size_w= args.img_size_w
+        self.patch_h=args.patch_h
+        self.patch_w=args.patch_w
+        self.patch=args.patch
         self.img_ch = args.img_ch
 
 
@@ -148,6 +155,7 @@ class UGATIT(object) :
             # Up-Sampling
             for i in range(2) :
                 x = up_sample(x, scale_factor=2)
+                #tf.nn.conv2d_transpose(x, [none,4,4,3], channel//2, strides, padding='SAME', data_format='NHWC',dilations=None, name=None)
                 x = conv(x, channel//2, kernel=3, stride=1, pad=1, pad_type='reflect', scope='up_conv_'+str(i))
                 x = layer_instance_norm(x, scope='layer_ins_norm_'+str(i))
                 x = relu(x)
@@ -190,6 +198,8 @@ class UGATIT(object) :
         with tf.variable_scope(scope, reuse=reuse) :
             local_x, local_cam, local_heatmap = self.discriminator_local(x_init, reuse=reuse, scope='local')
             global_x, global_cam, global_heatmap = self.discriminator_global(x_init, reuse=reuse, scope='global')
+            print ('&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&')
+            print (local_x , global_x)
 
             D_logit.extend([local_x, global_x])
             D_CAM_logit.extend([local_cam, global_cam])
@@ -345,7 +355,7 @@ class UGATIT(object) :
 
 
             """ Input Image"""
-            Image_Data_Class = ImageData(self.img_size, self.img_ch, self.augment_flag)
+            Image_Data_Class = ImageData(self.img_size_h,self.img_size_w, self.img_ch, self.augment_flag, self.patch_h,self.patch_w,self.patch )
 
             trainA = tf.data.Dataset.from_tensor_slices(self.trainA_dataset)
             trainB = tf.data.Dataset.from_tensor_slices(self.trainB_dataset)
@@ -478,12 +488,15 @@ class UGATIT(object) :
 
         else :
             """ Test """
-            self.test_domain_A = tf.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_A')
-            self.test_domain_B = tf.placeholder(tf.float32, [1, self.img_size, self.img_size, self.img_ch], name='test_domain_B')
+            self.test_domain_A = tf.placeholder(tf.float32, [1, self.img_size_h, self.img_size_w, self.img_ch], name='test_domain_A')
+            self.test_domain_B = tf.placeholder(tf.float32, [1, self.img_size_h, self.img_size_w, self.img_ch], name='test_domain_B')
+            self.test_disc_real = tf.placeholder(tf.float32, [1, self.img_size_h, self.img_size_w, self.img_ch], name='test_disc_real')
 
 
             self.test_fake_B, _ = self.generate_a2b(self.test_domain_A)
             self.test_fake_A, _ = self.generate_b2a(self.test_domain_B)
+            self.test_disc_score, _, _, _ = self.discriminator(self.test_disc_real, scope="discriminator_B")
+            
 
 
     def train(self):
@@ -610,6 +623,65 @@ class UGATIT(object) :
         else:
             print(" [*] Failed to find a checkpoint")
             return False, 0
+            
+            
+    def test_discriminator(self):
+    
+        tf.global_variables_initializer().run()
+        test_translated_A_files = glob('./results/{}/*.*'.format('UGATIT_light_datasetv2/_lsgan_4resblock_6dis_1_1_10_10_1000_sn_smoothing'))
+        #test_translated_A_files = glob('./dataset/{}/*.*'.format(self.dataset_name + '/trainB'))
+        #print (test_translated_A_files)
+        print ('**********************************************************************************************************************************')
+        
+
+        self.saver = tf.train.Saver()
+        could_load, checkpoint_counter = self.load(self.checkpoint_dir)
+        self.result_dir_disc = os.path.join('discriminator_scores', self.model_dir)
+        check_folder(self.result_dir_disc)
+
+        if could_load :
+            print(" [*] Load SUCCESS")
+        else :
+            print(" [!] Load failed...")
+
+        # write html for visual comparison
+        index_path =  'discriminator_scores/discriminator_index.html'
+        index = open(index_path, 'w')
+        index.write("<html><body><table><tr>")
+        index.write("<th>name</th><th>input</th><th>output</th></tr>")
+        
+        with open('discriminator_scores/scores.csv','w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            for sample_file  in test_translated_A_files : #discriminate A
+                print('Processing A image: ' + sample_file)
+                sample_image = np.asarray(load_test_data(sample_file, size_h=self.img_size_h, size_w=self.img_size_w))
+                image_path = os.path.join(self.result_dir_disc,'{0}'.format(os.path.basename(sample_file)))
+    
+                #fake_img = self.sess.run(self.test_, feed_dict = {self.test_domain_A : sample_image})
+                #self.test_disc_score, _, _, _ = self.discriminator(self.test_disc_real, scope="discriminator_A")
+                discriminator_score = self.sess.run(self.test_disc_score, feed_dict = {self.test_disc_real : sample_image})
+                print ('++++++++++++++++++++++++++++++++++++++++++++++++')
+                print (discriminator_score[0].shape)
+                print (discriminator_score[1].shape)
+                sum = np.mean(discriminator_score[0])+np.mean(discriminator_score[1])
+                diff1= np.mean(np.square((discriminator_score[0]- 1.0)))
+                diff2= np.mean(np.square((discriminator_score[1]- 1.0)))
+                print (sum,np.mean(discriminator_score[0]),np.mean(discriminator_score[1]))
+                print (np.square((discriminator_score[0]- 1.0)).shape)
+                print (diff1, diff2)
+                
+                
+                writer.writerow([sum, sample_file])
+                
+                index.write("<td>%s</td>" % os.path.basename(image_path))
+                index.write("<td>%s</td>" % sum)
+                
+    
+                index.write("<td><img src='%s' width='%d' height='%d'></td>" % (sample_file if os.path.isabs(sample_file) else (
+                    '../..' + os.path.sep + sample_file), self.img_size_w, self.img_size_h))
+                index.write("</tr>")
+    
+            index.close()
 
     def test(self):
         tf.global_variables_initializer().run()
@@ -634,7 +706,7 @@ class UGATIT(object) :
 
         for sample_file  in test_A_files : # A -> B
             print('Processing A image: ' + sample_file)
-            sample_image = np.asarray(load_test_data(sample_file, size=self.img_size))
+            sample_image = np.asarray(load_test_data(sample_file, size_h=self.img_size_h, size_w=self.img_size_w))
             image_path = os.path.join(self.result_dir,'{0}'.format(os.path.basename(sample_file)))
 
             fake_img = self.sess.run(self.test_fake_B, feed_dict = {self.test_domain_A : sample_image})
@@ -643,14 +715,14 @@ class UGATIT(object) :
             index.write("<td>%s</td>" % os.path.basename(image_path))
 
             index.write("<td><img src='%s' width='%d' height='%d'></td>" % (sample_file if os.path.isabs(sample_file) else (
-                '../..' + os.path.sep + sample_file), self.img_size, self.img_size))
+                '../..' + os.path.sep + sample_file), self.img_size_w, self.img_size_h))
             index.write("<td><img src='%s' width='%d' height='%d'></td>" % (image_path if os.path.isabs(image_path) else (
-                '../..' + os.path.sep + image_path), self.img_size, self.img_size))
+                '../..' + os.path.sep + image_path), self.img_size_w, self.img_size_h))
             index.write("</tr>")
 
         for sample_file  in test_B_files : # B -> A
             print('Processing B image: ' + sample_file)
-            sample_image = np.asarray(load_test_data(sample_file, size=self.img_size))
+            sample_image = np.asarray(load_test_data(sample_file, size_h=self.img_size_h, size_w=self.img_size_w))
             image_path = os.path.join(self.result_dir,'{0}'.format(os.path.basename(sample_file)))
 
             fake_img = self.sess.run(self.test_fake_A, feed_dict = {self.test_domain_B : sample_image})
@@ -658,8 +730,8 @@ class UGATIT(object) :
             save_images(fake_img, [1, 1], image_path)
             index.write("<td>%s</td>" % os.path.basename(image_path))
             index.write("<td><img src='%s' width='%d' height='%d'></td>" % (sample_file if os.path.isabs(sample_file) else (
-                    '../..' + os.path.sep + sample_file), self.img_size, self.img_size))
+                    '../..' + os.path.sep + sample_file), self.img_size_w, self.img_size_h))
             index.write("<td><img src='%s' width='%d' height='%d'></td>" % (image_path if os.path.isabs(image_path) else (
-                    '../..' + os.path.sep + image_path), self.img_size, self.img_size))
+                    '../..' + os.path.sep + image_path), self.img_size_w, self.img_size_h))
             index.write("</tr>")
         index.close()
